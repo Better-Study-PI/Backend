@@ -1,217 +1,262 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-
-import uuid
+import os
 import json
-from flask import jsonify
+import uuid
+from dotenv import load_dotenv
+
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
 import btreeDriver
 import geraId
-
-# Módulos para usar variáveis de ambiente
-import os
-from dotenv import load_dotenv
-
-# IA
 from openai import OpenAI
 
-# Instanciar o gerador de ID
-ids = geraId.GeraId()
-
-# Instanciar o primeiro nó
-arvore = btreeDriver.btreeDriver(id = ids.gerar_id())
-
-# Parte de IA
+# ------------------------------------------------------
+# Configuração de variáveis de ambiente e instâncias globais
+# ------------------------------------------------------
 load_dotenv()
-chave_api = os.environ.get('API_KEY')
+API_KEY = os.environ.get('API_KEY')
 
+# Inicializa cliente OpenAI com rotas customizadas
 client = OpenAI(
-  base_url="https://openrouter.ai/api/v1",
-  api_key=chave_api,
+    base_url="https://openrouter.ai/api/v1",
+    api_key=API_KEY,
 )
 
+# Gerador global de IDs
+ids = geraId.GeraId()
+# Árvore B para gerenciar múltiplas instâncias de WebDriver
+arvore = btreeDriver.btreeDriver(id=ids.gerar_id())
 
+# Criação da aplicação Flask e configuração de CORS
+app = Flask(__name__)
+CORS(app)
 
-def login(u: str, s: str, id: int):
-    driver: webdriver.Chrome = arvore.encontra(id).getDriver()
+# ------------------------------------------------------
+# Funções auxiliares
+# ------------------------------------------------------
+
+def login(username: str, password: str, node_id: int) -> str:
+    """
+    Realiza o login no SIGA usando Selenium.
+    1. Espera pelo campo de usuário
+    2. Preenche usuário e senha
+    3. Clica em confirmar
+    4. Aguarda carregamento do nome e retorna JSON de sucesso ou falha
+    """
+    driver = arvore.encontra(node_id).getDriver()
     try:
+        # Aguarda campo de usuário estar disponível
         WebDriverWait(driver, 2).until(
             EC.presence_of_all_elements_located((By.ID, "vSIS_USUARIOID"))
         )
-        driver.find_element(By.ID, "vSIS_USUARIOID").send_keys(u)
-        driver.find_element(By.ID, "vSIS_USUARIOSENHA").send_keys(s)
+        driver.find_element(By.ID, "vSIS_USUARIOID").send_keys(username)
+        driver.find_element(By.ID, "vSIS_USUARIOSENHA").send_keys(password)
         driver.find_element(By.NAME, "BTCONFIRMA").click()
-        try:
-            WebDriverWait(driver, 4).until(
-                EC.presence_of_all_elements_located((By.ID, "span_MPW0041vPRO_PESSOALNOME"))
-            )
-            nome = driver.find_element(By.ID, 'span_MPW0041vPRO_PESSOALNOME').text
-            nome = nome[0:-2]
-            nome = nome.title().split()[0]
 
-            resposta = {'bool': True, 'nome': nome, 'id': id}
-            resposta = json.dumps(resposta, ensure_ascii=False, indent=4)
+        # Aguarda elemento do nome
+        WebDriverWait(driver, 4).until(
+            EC.presence_of_all_elements_located((By.ID, "span_MPW0041vPRO_PESSOALNOME"))
+        )
+        raw_name = driver.find_element(By.ID, 'span_MPW0041vPRO_PESSOALNOME').text
 
-            # print('Sucesso no login, retornando True')  # Adicionar em caso de testes
-            return resposta
-        except:
-            # print("Falha no login, retornando False")  # Adicionar em caso de testes
-            return {'bool': False}
-    except:
-        print("Login não encontrado")
+        # Processa retorno do nome
+        nome = raw_name[:-2].title().split()[0]
+        response = {'bool': True, 'nome': nome, 'id': node_id}
+        return json.dumps(response, ensure_ascii=False, indent=4)
 
-def notas_parciais(id: int):
-    driver: webdriver.Chrome = arvore.encontra(id).obtemDriver()
-    # print(f'Pegando notas parciais do driver ID: {arvore.encontra(id).obtemId()}, Driver: {driver}') # Adicionar em caso de testes
-    # Clicar no aba Notas Parciais
+    except Exception:
+        # Retorna falha de login
+        return json.dumps({'bool': False}, ensure_ascii=False)
+
+
+def notas_parciais(node_id: int) -> list:
+    """
+    Coleta notas parciais:
+    1. Clica na aba "Notas Parciais"
+    2. Lê linhas de disciplina e nota
+    3. Filtra "Projeto Integrador"
+    4. Retorna lista de dicionários com nome e nota
+    """
+    driver = arvore.encontra(node_id).obtemDriver()
+
     try:
+        # Seleciona aba de notas parciais
         WebDriverWait(driver, 3).until(
             EC.presence_of_all_elements_located((By.ID, "ygtvlabelel10Span"))
         )
         driver.find_element(By.ID, "ygtvlabelel10Span").click()
-    except:
-        print("Botão não encontrado")
 
-    # Pegar notas parciais
-    try:
+        # Coleta notas e nomes
         WebDriverWait(driver, 3).until(
             EC.presence_of_all_elements_located((By.CLASS_NAME, "ReadonlyAttribute"))
         )
-        
-        notas_ele = driver.find_elements(By.XPATH, "//*[starts-with(@id, 'span_vACD_ALUNOHISTORICOITEMMEDIAFINAL_00')]")
-        notas = [nota.text for nota in notas_ele]
-        mates_ele = driver.find_elements(By.XPATH, "//*[starts-with(@id, 'span_vACD_DISCIPLINANOME_00')]")
-        mates = []
-        
-        for i in range(len(mates_ele)):
-            if mates_ele[i].text.startswith("Projeto Integrador"):
-                notas.pop(i)
+        notas_elems = driver.find_elements(By.XPATH,
+            "//*[starts-with(@id, 'span_vACD_ALUNOHISTORICOITEMMEDIAFINAL_00')]")
+        materias_elems = driver.find_elements(By.XPATH,
+            "//*[starts-with(@id, 'span_vACD_DISCIPLINANOME_00')]")
+
+        notas = [n.text for n in notas_elems]
+        materias = []
+
+        # Filtra disciplinas de projeto integrador
+        for idx, elem in enumerate(materias_elems):
+            if elem.text.startswith("Projeto Integrador"):
+                notas.pop(idx)
             else:
-                mates.append(mates_ele[i].text)
+                materias.append(elem.text)
 
-        # print("Notas parciais obtidas") # Adicionar em caso de testes
+        # Monta estrutura de retorno
+        return [
+            {"tipo": '', "nome": mat, "nota": nota, 'abc': 'D'}
+            for mat, nota in zip(materias, notas)
+        ]
 
-        parcial = [{ "tipo": '', "nome": materia, "nota": nota, 'abc': 'D'} for materia, nota in zip(mates, notas)]
-        return parcial
-    except:
-        print("Os elementos com as notas parciais não foram encontrados.")
-        return 'Falha parciais' # Em caso desse return, pode haver erros. Arrumar depois (1/2)
+    except Exception:
+        print("Falha ao coletar notas parciais")
+        return []
 
-def notas_historicas(id: int):
-    # Clicar no aba Notas Histórico
-    driver: webdriver.Chrome = arvore.encontra(id).obtemDriver()
+
+def notas_historicas(node_id: int) -> list:
+    """
+    Coleta notas históricas:
+    1. Clica na aba "Notas Histórico"
+    2. Lê linhas de disciplina e nota
+    3. Filtra "Projeto Integrador"
+    4. Retorna lista de dicionários com tipo 'h', nome e nota
+    """
+    driver = arvore.encontra(node_id).obtemDriver()
+
     try:
+        # Seleciona aba histórico
         WebDriverWait(driver, 3).until(
             EC.presence_of_all_elements_located((By.ID, "ygtvlabelel8Span"))
         )
         driver.find_element(By.ID, "ygtvlabelel8Span").click()
-    except:
-        print("Botão Histórico não encontrado")
 
-    # Pegar notas históricas
-    try:
+        # Coleta notas e nomes
         WebDriverWait(driver, 3).until(
             EC.presence_of_all_elements_located((By.CLASS_NAME, "ReadonlyAttribute"))
         )
-        
-        notas_ele = driver.find_elements(By.XPATH, "//*[starts-with(@id, 'span_vACD_ALUNOHISTORICOITEMMEDIAFINAL_00')]")
-        notas = [nota.text for nota in notas_ele]
-        mates_ele = driver.find_elements(By.XPATH, "//*[starts-with(@id, 'span_vACD_DISCIPLINANOME_00')]")
-        mates = []
-        
-        for i in range(len(mates_ele)):
-            if mates_ele[i].text.startswith("Projeto Integrador"):
-                notas.pop(i)
+        notas_elems = driver.find_elements(By.XPATH,
+            "//*[starts-with(@id, 'span_vACD_ALUNOHISTORICOITEMMEDIAFINAL_00')]")
+        materias_elems = driver.find_elements(By.XPATH,
+            "//*[starts-with(@id, 'span_vACD_DISCIPLINANOME_00')]")
+
+        notas = [n.text for n in notas_elems]
+        materias = []
+
+        # Filtra disciplinas de projeto integrador
+        for idx, elem in enumerate(materias_elems):
+            if elem.text.startswith("Projeto Integrador"):
+                notas.pop(idx)
             else:
-                mates.append(mates_ele[i].text)
+                materias.append(elem.text)
 
-        # print("Notas históricas obtidas") # Adicionar em caso de testes
+        # Monta estrutura de retorno
+        return [
+            {"tipo": 'h', "nome": mat, "nota": nota, 'abc': 'D'}
+            for mat, nota in zip(materias, notas)
+        ]
 
-        historico = [{ "tipo": 'h', "nome": materia, "nota": nota, 'abc': 'D'} for materia, nota in zip(mates, notas)]
-        
-        return historico
-    except:
-        # print("Os elementos com as notas parciais não foram encontrados.") # Adicionar em caso de testes
-        return 'Falha historicas' # Em caso desse return, pode haver erros. Arrumar depois (2/2)
+    except Exception:
+        print("Falha ao coletar notas históricas")
+        return []
 
-
-app = Flask(__name__)
-CORS(app)
+# ------------------------------------------------------
+# Rotas da API
+# ------------------------------------------------------
 
 @app.route('/api/login', methods=['POST'])
 def receber_login():
-    print('\n\n\n\ndados recebidos para login')
-    dados = request.json 
-    u = dados['usuario']
-    s = dados['senha']
-    # print(dados)  # Adicionar em caso de testes
-    chrome_options = Options()
-    chrome_options.add_experimental_option('detach', True)
+    """
+    Endpoint: /api/login
+    Recebe JSON {usuario, senha}, inicializa WebDriver e realiza login
+    Retorna JSON com status e nome do usuário
+    """
+    data = request.json
+    user = data.get('usuario')
+    pwd = data.get('senha')
 
-    id = ids.geraId()
-    # Inserir primeira árvore que possui Driver
-    arvore.insere_no(id = id, driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), 
-                                                options=chrome_options))
-    # print('inserido uma nova árvore') # Adicionar em caso de testes
-    arvore.encontra(id).obtemDriver().get('https://siga.cps.sp.gov.br/aluno/login.aspx?')
+    # Configurações do ChromeDriver
+    chrome_opts = Options()
+    chrome_opts.add_experimental_option('detach', True)
 
-    # print('Árvore') # Adicionar em caso de testes
-    # arvore.mostra_EmOrdem() # Adicionar em caso de testes
-    # print('Return') # Adicionar em caso de testes
-    return login(u, s, id)
+    # Gera ID e insere nó na árvore
+    node_id = ids.geraId()
+    driver = webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()),
+        options=chrome_opts
+    )
+    arvore.insere_no(id=node_id, driver=driver)
+
+    # Navega até a página de login
+    driver.get('https://siga.cps.sp.gov.br/aluno/login.aspx?')
+
+    # Chama função de login e retorna resultado
+    response = login(user, pwd, node_id)
+    return response
+
 
 @app.route('/api/notas', methods=['POST'])
 def scrape_notas():
-    print('\n\n\n\nDados recebidos para pegar notas')
-    dados = request.json
-    # print(dados)  # Adicionar em caso de testes
-    id = dados['id']
+    """
+    Endpoint: /api/notas
+    Recebe JSON {id}, retorna notas parciais e históricas para o respectivo WebDriver
+    """
+    data = request.json
+    node_id = data.get('id')
 
-    notas_a = notas_parciais(id)
-    notas_h = notas_historicas(id)
+    parciais = notas_parciais(node_id)
+    historicas = notas_historicas(node_id)
 
-    notas = {
-        "parciais": notas_a,
-        "historicas": notas_h
-    }
+    return json.dumps({
+        "parciais": parciais,
+        "historicas": historicas
+    }, ensure_ascii=False, indent=4)
 
-    notas = json.dumps(notas, ensure_ascii=False, indent=4)
-    # print(notas) # Adicionar em caso de testes
-    return notas
 
-@app.route('/api/relatorioIA', methods=['GET'])
-def Relatório_IA():
+@app.route('/api/relatorioIA', methods=['POST'])
+def relatorio_ia():
+    """
+    Endpoint: /api/relatorioIA
+    Gera relatório em HTML/CSS usando OpenAI
+    """
+    req = request.json
+    notas = req.get('Notas')
+
+    tipo = 'markdown'
+
     completion = client.chat.completions.create(
         extra_headers={
-            "HTTP-Referer": "<YOUR_SITE_URL>", # Optional. Site URL for rankings on openrouter.ai.
-            "X-Title": "<YOUR_SITE_NAME>", # Optional. Site title for rankings on openrouter.ai.
+            "HTTP-Referer": "<YOUR_SITE_URL>",
+            "X-Title": "<YOUR_SITE_NAME>",
         },
-        extra_body={},
         model="meta-llama/llama-4-maverick:free",
         messages=[
             {
                 "role": "user", "content": [
                     {
                         "type": "text",
-                        "text": "Disserte porque a música rap do minecraft de player tals é incrível."
+                        "text": notas
                     },
                     {
-                        "type": "text",
-                        "text": "Me retorne uma resposta formatada em html e css"
+                        "type": "text", 
+                        "text": f"Me retorne a resposta em {tipo}"
                     }
                 ]
             }
         ]
     )
-
     return completion.choices[0].message.content
 
+
 if __name__ == '__main__':
+    # Executa a aplicação em modo debug
     app.run(debug=True)
