@@ -15,12 +15,29 @@ from selenium.webdriver.support import expected_conditions as EC
 import btreeDriver
 import geraId
 
+# Módulos para usar variáveis de ambiente
+import os
+from dotenv import load_dotenv
+
+# IA
+from openai import OpenAI
 
 # Instanciar o gerador de ID
 ids = geraId.GeraId()
 
 # Instanciar o primeiro nó
-arvore = btreeDriver.ArvDriver(id = ids.geraId())
+arvore = btreeDriver.btreeDriver(id = ids.gerar_id())
+
+# Parte de IA
+load_dotenv()
+chave_api = os.environ.get('API_KEY')
+
+client = OpenAI(
+  base_url="https://openrouter.ai/api/v1",
+  api_key=chave_api,
+)
+
+
 
 def login(u: str, s: str, id: int):
     driver: webdriver.Chrome = arvore.encontra(id).getDriver()
@@ -49,7 +66,6 @@ def login(u: str, s: str, id: int):
             return {'bool': False}
     except:
         print("Login não encontrado")
-
 
 def notas_parciais(id: int):
     driver: webdriver.Chrome = arvore.encontra(id).obtemDriver()
@@ -169,6 +185,33 @@ def scrape_notas():
     notas = json.dumps(notas, ensure_ascii=False, indent=4)
     # print(notas) # Adicionar em caso de testes
     return notas
+
+@app.route('/api/relatorioIA', methods=['GET'])
+def Relatório_IA():
+    completion = client.chat.completions.create(
+        extra_headers={
+            "HTTP-Referer": "<YOUR_SITE_URL>", # Optional. Site URL for rankings on openrouter.ai.
+            "X-Title": "<YOUR_SITE_NAME>", # Optional. Site title for rankings on openrouter.ai.
+        },
+        extra_body={},
+        model="meta-llama/llama-4-maverick:free",
+        messages=[
+            {
+                "role": "user", "content": [
+                    {
+                        "type": "text",
+                        "text": "Disserte porque a música rap do minecraft de player tals é incrível."
+                    },
+                    {
+                        "type": "text",
+                        "text": "Me retorne uma resposta formatada em html e css"
+                    }
+                ]
+            }
+        ]
+    )
+
+    return completion.choices[0].message.content
 
 if __name__ == '__main__':
     app.run(debug=True)
