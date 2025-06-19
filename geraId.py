@@ -6,16 +6,15 @@ class GeraId:
     aleatórios no intervalo de 1 a 20.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Inicializa uma lista vazia para armazenar os IDs já gerados."""
         self._ids_gerados = []
 
-    def gerar_id(self):
+    def gerar_id(self) -> int:
         """
         Gera um novo ID aleatório entre 1 e 20 que ainda não foi utilizado.
         
-        Retorna:
-            int: Um número único ainda não gerado.
+        Return: int
         """
 
         while True:
@@ -24,11 +23,10 @@ class GeraId:
                 self._ids_gerados.append(novo_id)
                 return novo_id
 
-    def get_all_id(self):
+    def get_all_id(self) -> list[int]:
         """
         Retorna a lista de todos os IDs já gerados.
 
-        Retorna:
-            list: Lista de números inteiros já gerados.
+        Return: list[int]
         """
         return self._ids_gerados.copy()
